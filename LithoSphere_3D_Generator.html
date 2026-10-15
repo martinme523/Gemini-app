@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LithoSphere 3D Generator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0f172a; color: #f8fafc; font-family: 'Inter', sans-serif; }
+        #app-container { display: flex; height: 100vh; width: 100vw; flex-direction: column; }
+        @media (min-width: 768px) { #app-container { flex-direction: row; } }
+        
+        #sidebar { 
+            width: 100%; height: 50vh; overflow-y: auto; background-color: #1e293b; border-right: 1px solid #334155; 
+            padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem;
+        }
+        @media (min-width: 768px) { #sidebar { width: 350px; height: 100vh; } }
+
+        #preview-container { flex: 1; height: 50vh; position: relative; }
+        @media (min-width: 768px) { #preview-container { height: 100vh; } }
+
+        input[type="number"], input[type="range"], select {
+            width: 100%; padding: 0.5rem; border-radius: 0.375rem; border: 1px solid #475569;
+            background-color: #0f172a; color: white; outline: none; transition: border-color 0.2s;
+        }
+        input[type="number"]:focus, select:focus { border-color: #3b82f6; }
+        
+        .btn {
+            width: 100%; padding: 0.75rem; border-radius: 0.5rem; font-weight: 600; cursor: pointer;
+            transition: background-color 0.2s, transform 0.1s; display: flex; justify-content: center; align-items: center; gap: 0.5rem;
+        }
+        .btn:active { transform: scale(0.98); }
+        .btn-primary { background-color: #3b82f6; color: white; }
+        .btn-primary:hover { background-color: #2563eb; }
+        .btn-success { background-color: #10b981; color: white; }
+        .btn-success:hover { background-color: #059669; }
+        .btn:disabled { background-color: #475569; cursor: not-allowed; transform: none; }
+
+        /* Custom Scrollbar for sidebar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+    </style>
+    <!-- Import Maps for Three.js -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="app-container">
+        <!-- Sidebar Controls -->
+        <div id="sidebar">
+            <div>
+                <h1 class="text-2xl font-bold text-blue-400">LithoSphere 3D</h1>
+                <p class="text-xs text-slate-400 mt-1">Generate 3D printable lithophanes</p>
+            </div>
+
+            <!-- Image Upload -->
+            <div class="bg-slate-800 p-4 rounded-lg border border-slate-700 shadow-inner">
+                <label class="block text-sm font-medium text-slate-300 mb-2">1. Upload Image</label>
+                <input type="file" id="imageInput" accept="image/*" class="block w-full text-sm text-slate-400
+                    file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0
+                    file:text-sm file:font-semibold file:bg-blue-600 file:text-white
+                    hover:file:bg-blue-700 cursor-pointer mb-3" />
+                
+                <div class="w-full h-32 bg-slate-900 rounded border border-slate-700 flex items-center justify-center overflow-hidden">
+                    <span id="preview-text" class="text-slate-500 text-sm">No image selected</span>
+                    <img id="preview-2d" class="max-w-full max-h-full hidden object-contain" />
+                </div>
+            </div>
+
+            <!-- Dimensions & Shape -->
+            <div class="space-y-3">
+                <label class="block text-sm font-medium text-slate-300">2. Shape & Size</label>
+                
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="text-xs text-slate-400">Width (mm)</label>
+                        <input type="number" id="physW" value="100" min="10" step="1">
+                    </div>
+                    <div>
+                        <label class="text-xs text-slate-400">Height (mm)</label>
+                        <input type="number" id="physH" value="100" min="10" step="1">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="text-xs text-slate-400">Shape Type</label>
+                    <select id="shape">
+                        <option value="flat">Flat Wall</option>
+                        <option value="cylinder">Curved / Cylinder</option>
+                        <option value="sphere">Spherical Dome / Ball</option>
+                    </select>
+                </div>
+
+                <div id="angleWrapper" style="display: none;">
+                    <label class="text-xs text-slate-400 flex justify-between">
+                        <span>Curve Angle (Degrees)</span>
+                        <span id="angleVal">360°</span>
+                    </label>
+                    <input type="range" id="curveAngle" min="30" max="360" value="360" class="mt-1">
+                    <p class="text-[10px] text-slate-500 mt-1">Width dictates the arc length. 360 = full loop.</p>
+                </div>
+            </div>
+
+            <!-- Lithophane Settings -->
+            <div class="space-y-3">
+                <label class="block text-sm font-medium text-slate-300">3. Thickness (Z-Axis)</label>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="text-xs text-slate-400">Min (mm) - Lighter</label>
+                        <input type="number" id="minThick" value="0.8" min="0.2" step="0.1">
+                    </div>
+                    <div>
+                        <label class="text-xs text-slate-400">Max (mm) - Darker</label>
+                        <input type="number" id="maxThick" value="3.2" min="1.0" step="0.1">
+                    </div>
+                </div>
+                
+                <div class="flex items-center gap-2 mt-2">
+                    <input type="checkbox" id="invertImage" class="w-4 h-4 rounded bg-slate-900 border-slate-700">
+                    <label for="invertImage" class="text-xs text-slate-300">Invert Colors (Darker = Thinner)</label>
+                </div>
+            </div>
+
+            <!-- Quality & Generation -->
+            <div class="space-y-3 pt-2 border-t border-slate-700">
+                <div>
+                    <label class="text-xs text-slate-400 flex justify-between">
+                        <span>Mesh Resolution (Quality)</span>
+                        <span id="resVal">250px</span>
+                    </label>
+                    <input type="range" id="resolution" min="50" max="500" value="250" class="mt-1">
+                    <p class="text-[10px] text-slate-500">Higher = Better detail, but slower to generate.</p>
+                </div>
+
+                <button id="generateBtn" class="btn btn-primary" disabled>
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
+                    Generate 3D Mesh
+                </button>
+                <button id="exportBtn" class="btn btn-success" disabled>
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                    Download STL
+                </button>
+            </div>
+        </div>
+
+        <!-- 3D Preview -->
+        <div id="preview-container">
+            <!-- Three.js Canvas will be injected here -->
+            <div id="loading-overlay" class="absolute inset-0 bg-slate-900/80 hidden flex-col items-center justify-center z-10 backdrop-blur-sm">
+                <div class="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500 mb-4"></div>
+                <h2 class="text-xl font-semibold text-white">Generating Mesh...</h2>
+                <p class="text-slate-400 mt-2 text-sm text-center px-4">Creating solid manifold geometry for 3D printing.<br>This may take a few seconds.</p>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { STLExporter } from 'three/addons/exporters/STLExporter.js';
+
+        // --- Global Variables ---
+        let scene, camera, renderer, controls, mesh;
+        let imgData = null;
+        let imageAspect = 1;
+        const container = document.getElementById('preview-container');
+
+        // --- DOM Elements ---
+        const ui = {
+            imageInput: document.getElementById('imageInput'),
+            preview2d: document.getElementById('preview-2d'),
+            previewText: document.getElementById('preview-text'),
+            physW: document.getElementById('physW'),
+            physH: document.getElementById('physH'),
+            shape: document.getElementById('shape'),
+            angleWrapper: document.getElementById('angleWrapper'),
+            curveAngle: document.getElementById('curveAngle'),
+            angleVal: document.getElementById('angleVal'),
+            minThick: document.getElementById('minThick'),
+            maxThick: document.getElementById('maxThick'),
+            invertImage: document.getElementById('invertImage'),
+            resolution: document.getElementById('resolution'),
+            resVal: document.getElementById('resVal'),
+            generateBtn: document.getElementById('generateBtn'),
+            exportBtn: document.getElementById('exportBtn'),
+            loadingOverlay: document.getElementById('loading-overlay')
+        };
+
+        // --- Event Listeners ---
+        ui.shape.addEventListener('change', (e) => {
+            ui.angleWrapper.style.display = e.target.value === 'flat' ? 'none' : 'block';
+        });
+
+        ui.curveAngle.addEventListener('input', (e) => {
+            ui.angleVal.textContent = `${e.target.value}°`;
+        });
+
+        ui.resolution.addEventListener('input', (e) => {
+            ui.resVal.textContent = `${e.target.value}px`;
+        });
+
+        ui.physW.addEventListener('input', () => {
+            if(imgData) {
+                // Keep aspect ratio
+                ui.physH.value = (parseFloat(ui.physW.value) / imageAspect).toFixed(1);
+            }
+        });
+
+        ui.imageInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const img = new Image();
+            img.src = URL.createObjectURL(file);
+            img.onload = () => {
+                imageAspect = img.width / img.height;
+                ui.physH.value = (parseFloat(ui.physW.value) / imageAspect).toFixed(1);
+                
+                // Show 2D preview
+                ui.preview2d.src = img.src;
+                ui.preview2d.classList.remove('hidden');
+                ui.previewText.classList.add('hidden');
+
+                // Extract image data downscaled based on max slider bounds to save memory for extraction
+                const maxCanvasSize = 1000;
+                let cw = img.width;
+                let ch = img.height;
+                if(cw > maxCanvasSize || ch > maxCanvasSize) {
+                    if(cw > ch) { ch = Math.round(ch * maxCanvasSize / cw); cw = maxCanvasSize; }
+                    else { cw = Math.round(cw * maxCanvasSize / ch); ch = maxCanvasSize; }
+                }
+
+                const canvas = document.createElement('canvas');
+                canvas.width = cw; canvas.height = ch;
+                const ctx = canvas.getContext('2d', { willReadFrequently: true });
+                ctx.drawImage(img, 0, 0, cw, ch);
+                
+                // Store the base canvas for later resampling during mesh generation
+                imgData = canvas; 
+                ui.generateBtn.disabled = false;
+            };
+        });
+
+        ui.generateBtn.addEventListener('click', () => {
+            if (!imgData) return;
+            ui.loadingOverlay.classList.remove('hidden');
+            ui.generateBtn.disabled = true;
+            
+            // Yield to browser to show loader
+            setTimeout(() => {
+                try {
+                    generateMesh();
+                    ui.exportBtn.disabled = false;
+                } catch(e) {
+                    console.error(e);
+                    alert("Error generating mesh. Try lowering resolution.");
+                } finally {
+                    ui.loadingOverlay.classList.add('hidden');
+                    ui.generateBtn.disabled = false;
+                }
+            }, 50);
+        });
+
+        ui.exportBtn.addEventListener('click', () => {
+            if (!mesh) return;
+            const exporter = new STLExporter();
+            const stlString = exporter.parse(scene);
+            const blob = new Blob([stlString], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.style.display = 'none';
+            link.href = url;
+            link.download = 'lithophane.stl';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        });
+
+        // --- Three.js Setup ---
+        function init3D() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0f172a);
+
+            camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 1, 2000);
+            camera.position.set(0, 0, 200);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            container.appendChild(renderer.domElement);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+
+            // Lighting (Simulate Backlight for Lithophane)
+            const ambient = new THREE.AmbientLight(0xffffff, 0.4);
+            scene.add(ambient);
+
+            // Front light to see geometry
+            const dirLightFront = new THREE.DirectionalLight(0xffffff, 0.5);
+            dirLightFront.position.set(0, 0, 100);
+            scene.add(dirLightFront);
+
+            // Strong back light to simulate lithophane illumination
+            const dirLightBack = new THREE.DirectionalLight(0xffffff, 2.5);
+            dirLightBack.position.set(0, 0, -100);
+            scene.add(dirLightBack);
+
+            window.addEventListener('resize', onWindowResize);
+            animate();
+        }
+
+        function onWindowResize() {
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // --- Core Mesh Generation Engine ---
+        function generateMesh() {
+            // 1. Resample image to desired mesh resolution
+            const res = parseInt(ui.resolution.value);
+            const w = res;
+            const h = Math.round(res / imageAspect);
+            
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = w; tempCanvas.height = h;
+            const ctx = tempCanvas.getContext('2d', { willReadFrequently: true });
+            ctx.drawImage(imgData, 0, 0, w, h);
+            const pixels = ctx.getImageData(0, 0, w, h).data;
+
+            // 2. Fetch parameters
+            const physW = parseFloat(ui.physW.value) || 100;
+            const physH = parseFloat(ui.physH.value) || 100;
+            const minT = parseFloat(ui.minThick.value) || 0.8;
+            const maxT = parseFloat(ui.maxThick.value) || 3.2;
+            const shape = ui.shape.value;
+            let angleSpanX = parseFloat(ui.curveAngle.value) || 360;
+            const invert = ui.invertImage.checked;
+
+            // Prevent perfectly overlapping seam on full cylinder/sphere to maintain 100% manifold STL validity
+            if (angleSpanX >= 360) angleSpanX = 359.9;
+            angleSpanX = angleSpanX * (Math.PI / 180);
+
+            // Brightness to Thickness function
+            const getThickness = (x, y) => {
+                // Ensure bounds
+                x = Math.max(0, Math.min(x, w - 1));
+                y = Math.max(0, Math.min(y, h - 1));
+                const i = (y * w + x) * 4;
+                // Grayscale luminance
+                const bright = (0.299 * pixels[i] + 0.587 * pixels[i+1] + 0.114 * pixels[i+2]) / 255;
+                const value = invert ? bright : (1 - bright); // Lighter = thinner (closer to minT)
+                return minT + value * (maxT - minT);
+            };
+
+            const vertices = [];
+            const backVertices = [];
+            const colors = [];
+            const backColors = [];
+
+            const R = physW / angleSpanX; // Base Radius
+            // For spheres, map height to latitude angle span
+            const angleSpanY = Math.min(physH / R, Math.PI * 0.95); // Limit slightly to avoid pole singularity gaps
+
+            // 3. Generate Grid Vertices
+            for (let i = 0; i <= h; i++) {
+                for (let j = 0; j <= w; j++) {
+                    const u = j / w;
+                    const v = 1 - (i / h);
+                    const t = getThickness(j, i);
+
+                    let xF, yF, zF, xB, yB, zB;
+
+                    if (shape === 'flat') {
+                        xF = (u - 0.5) * physW;
+                        yF = (v - 0.5) * physH;
+                        zF = t; // Front varies
+                        xB = xF; yB = yF; zB = 0; // Flat back
+                    } else if (shape === 'cylinder') {
+                        const angle = (u - 0.5) * angleSpanX;
+                        xF = (R + t) * Math.sin(angle);
+                        zF = (R + t) * Math.cos(angle) - R;
+                        yF = (v - 0.5) * physH;
+                        
+                        xB = R * Math.sin(angle);
+                        zB = R * Math.cos(angle) - R;
+                        yB = yF;
+                    } else if (shape === 'sphere') {
+                        const lon = (u - 0.5) * angleSpanX;
+                        const lat = (v - 0.5) * angleSpanY;
+                        
+                        xF = (R + t) * Math.cos(lat) * Math.sin(lon);
+                        zF = (R + t) * Math.cos(lat) * Math.cos(lon) - R;
+                        yF = (R + t) * Math.sin(lat);
+                        
+                        xB = R * Math.cos(lat) * Math.sin(lon);
+                        zB = R * Math.cos(lat) * Math.cos(lon) - R;
+                        yB = R * Math.sin(lat);
+                    }
+
+                    vertices.push(xF, yF, zF);
+                    backVertices.push(xB, yB, zB);
+
+                    // Vertex colors for realistic preview (Thinner = Brighter)
+                    const colorIntensity = 0.2 + 0.8 * (1 - ((t - minT) / (maxT - minT)));
+                    colors.push(colorIntensity, colorIntensity, colorIntensity);
+                    backColors.push(0.1, 0.1, 0.1); // Back is dark
+                }
+            }
+
+            const allVertices = new Float32Array([...vertices, ...backVertices]);
+            const allColors = new Float32Array([...colors, ...backColors]);
+            const indices = [];
+            const N = (w + 1) * (h + 1);
+
+            // Helper to create quads ensuring counter-clockwise outward normals
+            const makeQuad = (bl, br, tl, tr) => {
+                indices.push(bl, br, tl);
+                indices.push(br, tr, tl);
+            };
+
+            // 4. Stitch Geometry Faces
+            for (let i = 0; i < h; i++) {
+                for (let j = 0; j < w; j++) {
+                    const a = i * (w + 1) + j;         // Top-Left Front
+                    const b = i * (w + 1) + j + 1;     // Top-Right Front
+                    const c = (i + 1) * (w + 1) + j;     // Bottom-Left Front
+                    const d = (i + 1) * (w + 1) + j + 1; // Bottom-Right Front
+
+                    const aB = N + a, bB = N + b, cB = N + c, dB = N + d; // Back counterparts
+
+                    // Front Face
+                    makeQuad(c, d, a, b);
+                    // Back Face (Reversed mapping for outward normal)
+                    makeQuad(dB, cB, bB, aB);
+
+                    // Edge Stitching to form solid
+                    if (i === 0) makeQuad(a, b, aB, bB);       // Top Edge
+                    if (i === h - 1) makeQuad(cB, dB, c, d);   // Bottom Edge
+                    if (j === 0) makeQuad(cB, c, aB, a);       // Left Edge
+                    if (j === w - 1) makeQuad(d, dB, b, bB);   // Right Edge
+                }
+            }
+
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.BufferAttribute(allVertices, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(allColors, 3));
+            geometry.setIndex(indices);
+            geometry.computeVertexNormals();
+
+            // 5. Update Scene
+            if (mesh) {
+                scene.remove(mesh);
+                mesh.geometry.dispose();
+                mesh.material.dispose();
+            }
+
+            const material = new THREE.MeshStandardMaterial({
+                color: 0xffffff,
+                roughness: 0.6,
+                metalness: 0.1,
+                side: THREE.DoubleSide,
+                vertexColors: true // Allows us to simulate backlight brightness
+            });
+
+            mesh = new THREE.Mesh(geometry, material);
+            scene.add(mesh);
+
+            // Adjust camera dynamically based on scale
+            const maxDim = Math.max(physW, physH);
+            camera.position.set(0, 0, maxDim * 1.5);
+            controls.target.set(0, 0, 0);
+            controls.update();
+        }
+
+        // Initialize application
+        init3D();
+
+    </script>
+</body>
+</html>
